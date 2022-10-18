@@ -483,6 +483,7 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
        trans_mode = VSOCK;
        ALOGV("%s: falling back to UNIX as the trans mode is not set",__FUNCTION__);
     }
+            trans_mode = TCP;
     if(trans_mode == UNIX)
     {
         threadParam->mSocketServerFd = ::socket(AF_UNIX, SOCK_STREAM, 0);
