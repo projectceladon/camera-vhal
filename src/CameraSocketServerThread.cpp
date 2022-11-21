@@ -13,9 +13,9 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-//#define LOG_NDEBUG 0
-//#define LOG_NNDEBUG 0
-#define LOG_TAG "CameraSocketServerThread: "
+#define LOG_NDEBUG 0
+#define LOG_NNDEBUG 0
+#define LOG_TAG "Shiva CameraSocketServerThread: "
 #include <log/log.h>
 #define HAVE_JPEG // required for libyuv.h to export MJPEG decode APIs
 #include <libyuv.h>

@@ -21,9 +21,9 @@
 
 #include <inttypes.h>
 
-//#define LOG_NNDEBUG 0
+#define LOG_NNDEBUG 0
 #define LOG_NDEBUG 0
-#define LOG_TAG "VirtualFakeCamera3: "
+#define LOG_TAG "Shiva VirtualFakeCamera3: "
 #include <cutils/properties.h>
 #include <log/log.h>
 
