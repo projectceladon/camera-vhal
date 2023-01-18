@@ -202,18 +202,18 @@ mfxStatus MfxDecoder::SetVideoParameters(uint32_t codec_type) {
             mMfxVideoDecParams.mfx.SamplingFactorH[0] = 2;
             switch (mResHeight) {
                 case android::VirtualCamera3::DECODER_SUPPORTED_RESOLUTION_480P:
-                    mMfxVideoDecParams.mfx.CodecLevel = MFX_LEVEL_HEVC_31;
+                    mMfxVideoDecParams.mfx.CodecLevel = MFX_LEVEL_HEVC_51;
                     mMfxVideoDecParams.mfx.FrameInfo.Height = mResHeight;
                     mMfxVideoDecParams.mfx.FrameInfo.BufferSize = 31457920;
                     break;
                 case android::VirtualCamera3::DECODER_SUPPORTED_RESOLUTION_720P:
-                    mMfxVideoDecParams.mfx.CodecLevel = MFX_LEVEL_HEVC_31;
+                    mMfxVideoDecParams.mfx.CodecLevel = MFX_LEVEL_HEVC_51;
                     mMfxVideoDecParams.mfx.FrameInfo.Height = mResHeight +
                                                               CODEC_ROUND_OFF_PIXELS_16;
                     mMfxVideoDecParams.mfx.FrameInfo.BufferSize = 48235776;
                     break;
                 case android::VirtualCamera3::DECODER_SUPPORTED_RESOLUTION_1080P:
-                    mMfxVideoDecParams.mfx.CodecLevel = MFX_LEVEL_HEVC_4;
+                    mMfxVideoDecParams.mfx.CodecLevel = MFX_LEVEL_HEVC_51;
                     mMfxVideoDecParams.mfx.FrameInfo.Height = mResHeight +
                                                               CODEC_ROUND_OFF_PIXELS_8;
                     mMfxVideoDecParams.mfx.FrameInfo.BufferSize = 71305088;
