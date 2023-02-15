@@ -125,8 +125,8 @@ VirtualCameraFactory::~VirtualCameraFactory() {
     for (auto it = mVirtualCameras.begin(); it != mVirtualCameras.end(); it++) {
         delete it->second;
         it->second = nullptr;
-        mVirtualCameras.erase(it);
     }
+    mVirtualCameras.clear();
 
     if (mSocketListener) {
         mSocketListener->requestExit();
