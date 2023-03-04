@@ -24,8 +24,8 @@
  * camera_device_t/camera_module_t structures.
  */
 
-// #define LOG_NDEBUG 0
-#define LOG_TAG "VirtualCamera_BaseCamera"
+#define LOG_NDEBUG 0
+#define LOG_TAG "Shiva VirtualCamera_BaseCamera"
 #include <log/log.h>
 
 #include "VirtualBaseCamera.h"
