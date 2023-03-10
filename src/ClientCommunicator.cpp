@@ -99,14 +99,14 @@ status_t ClientCommunicator::sendCommandToClient(camera_packet_t *config_cmd_pac
 
 void ClientCommunicator::sendCameraCapabilities() {
     ALOGVV("%s(%d) Enter", __FUNCTION__, mClientId);
-    Mutex::Autolock al(mMutex);
+    mMutex.lock();
     size_t cap_packet_size = sizeof(camera_header_t) + sizeof(camera_capability_t);
     camera_capability_t capability = {};
     camera_packet_t *cap_packet = NULL;
     cap_packet = (camera_packet_t *)malloc(cap_packet_size);
     if (cap_packet == NULL) {
         ALOGE("%s(%d): cap camera_packet_t allocation failed: %d ", __FUNCTION__, mClientId, __LINE__);
-        return;
+        goto out;
     }
 
     cap_packet->header.type = CAPABILITY;
@@ -127,8 +127,7 @@ void ClientCommunicator::sendCameraCapabilities() {
 
 void ClientCommunicator::handleCameraInfo(uint32_t header_size) {
     ALOGVV("%s(%d) Enter", __FUNCTION__, mClientId);
-
-    Mutex::Autolock al(mMutex);
+    mMutex.lock();
     int camera_id, expctd_cam_id;
     struct ValidateClientCapability val_client_cap[MAX_NUMBER_OF_SUPPORTED_CAMERAS];
     ssize_t recv_size = 0;
@@ -168,7 +167,6 @@ void ClientCommunicator::handleCameraInfo(uint32_t header_size) {
         val_client_cap[i].validResolution = mCapabilitiesHelper.IsResolutionValid(camera_info[i].resolution);
         val_client_cap[i].validOrientation = mCapabilitiesHelper.IsSensorOrientationValid(camera_info[i].sensorOrientation);
         val_client_cap[i].validCameraFacing = mCapabilitiesHelper.IsCameraFacingValid(camera_info[i].facing);
-
     }
     // Check whether recceived any invalid capability info or not.
     // ACK packet to client would be updated based on this verification.
