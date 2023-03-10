@@ -49,6 +49,7 @@ public:
     ~ClientCommunicator();
 
     int getClientId();
+    void requestExit();
     status_t sendCommandToClient(socket::camera_packet_t *config_cmd_packet,
                                  size_t config_cmd_packet_size);
     std::atomic<socket::CameraSessionState> mCameraSessionState;

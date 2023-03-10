@@ -67,7 +67,6 @@ ClientCommunicator::ClientCommunicator(std::shared_ptr<ConnectionsListener> list
 }
 
 ClientCommunicator::~ClientCommunicator() {
-    mRunning = false;
     if (mThread.valid()) { mThread.wait(); }
     Mutex::Autolock al(mMutex);
     if (mClientFd > 0) {
@@ -75,6 +74,10 @@ ClientCommunicator::~ClientCommunicator() {
         close(mClientFd);
         mClientFd = -1;
     }
+}
+
+void ClientCommunicator::requestExit() {
+    mRunning = false;
 }
 
 int ClientCommunicator::getClientId() {
@@ -273,7 +276,7 @@ void ClientCommunicator::sendAck() {
 bool ClientCommunicator::threadLooper() {
     while (mRunning) {
         if (!clientThread()) {
-            ALOGI("%s(%d) : clientThread returned flase, Exit", __FUNCTION__, mClientId);
+            ALOGI("%s(%d) : clientThread returned false, Exit", __FUNCTION__, mClientId);
             return false;
         } else {
             ALOGI("%s(%d) : Re-spawn clientThread", __FUNCTION__, mClientId);
@@ -391,7 +394,7 @@ bool ClientCommunicator::clientThread() {
     close(mClientFd);
     mClientFd = -1;
     ALOGVV("%s(%d): Exit", __FUNCTION__, mClientId);
-    return true;
+    return mRunning;
 }
 
 void ClientCommunicator::handleIncomingFrames(uint32_t header_size) {

@@ -120,5 +120,7 @@ TEST_F(CameraFixture, MultipleCameraCapReq)
     this_thread::sleep_for(500ms);
     ASSERT_EQ(MULTI_CAMERA_CLIENT, gVirtualCameraFactory.get_number_of_cameras());
     gVirtualCameraFactory.clearCameraInfo(client_id);
+    this_thread::sleep_for(200ms);
+    gVirtualCameraFactory.destroy(client_id);
 } 
 

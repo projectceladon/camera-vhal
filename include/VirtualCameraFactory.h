@@ -177,7 +177,8 @@ public:
     bool createVirtualRemoteCamera(std::shared_ptr<MfxDecoder> decoder,
                                    int clientId,
                                    android::socket::camera_info_t cameraInfo);
-
+    // Does proper cleanup and exit
+    void destroy(int clientId);
 private:
     /****************************************************************************
      * Private API
