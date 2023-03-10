@@ -110,9 +110,11 @@ bool VirtualCameraFactory::createSocketListener() {
     ALOGV("%s: E", __FUNCTION__);
 
     char id[PROPERTY_VALUE_MAX] = {0};
-    if (property_get("ro.boot.container.id", id, "") > 0) {
+    // This property is used by gtest, set this before running gtest
+    if (property_get("ro.boot.container.testid", id, "") > 0) {
         mSocketListener = std::make_shared<ConnectionsListener>(id);
-        mSocketListener->run("ConnectionsListener");
+    } else if (property_get("ro.boot.container.id", id, "") > 0) {
+        mSocketListener = std::make_shared<ConnectionsListener>(id);
     } else
         ALOGE("%s: FATAL: container id is not set!!", __func__);
 
@@ -125,13 +127,29 @@ VirtualCameraFactory::~VirtualCameraFactory() {
     for (auto it = mVirtualCameras.begin(); it != mVirtualCameras.end(); it++) {
         delete it->second;
         it->second = nullptr;
-        mVirtualCameras.erase(it);
     }
+    mVirtualCameras.clear();
 
     if (mSocketListener) {
         mSocketListener->requestExit();
-        mSocketListener->join();
+        mSocketListener->requestJoin();
     }
+    mClientThreads.clear();
+}
+
+void VirtualCameraFactory::destroy(int clientId) {
+    ALOGV("%s: Enter", __FUNCTION__);
+    for (auto it = mVirtualCameras.begin(); it != mVirtualCameras.end(); it++) {
+        delete it->second;
+        it->second = nullptr;
+    }
+    mVirtualCameras.clear();
+    mClientThreads[clientId]->requestExit();
+    if (mSocketListener) {
+        mSocketListener->requestExit();
+        mSocketListener->requestJoin();
+    }
+    mClientThreads.clear();
 }
 
 /******************************************************************************
