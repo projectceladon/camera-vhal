@@ -99,7 +99,7 @@ status_t ClientCommunicator::sendCommandToClient(camera_packet_t *config_cmd_pac
 
 void ClientCommunicator::sendCameraCapabilities() {
     ALOGVV("%s(%d) Enter", __FUNCTION__, mClientId);
-    mMutex.lock();
+    Mutex::Autolock al(mMutex);
     size_t cap_packet_size = sizeof(camera_header_t) + sizeof(camera_capability_t);
     camera_capability_t capability = {};
     camera_packet_t *cap_packet = NULL;
@@ -127,7 +127,7 @@ void ClientCommunicator::sendCameraCapabilities() {
 
 void ClientCommunicator::handleCameraInfo(uint32_t header_size) {
     ALOGVV("%s(%d) Enter", __FUNCTION__, mClientId);
-    mMutex.lock();
+    Mutex::Autolock al(mMutex);
     int camera_id, expctd_cam_id;
     struct ValidateClientCapability val_client_cap[MAX_NUMBER_OF_SUPPORTED_CAMERAS];
     ssize_t recv_size = 0;
