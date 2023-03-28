@@ -86,13 +86,13 @@ public:
     virtual status_t setCameraFD(int socketFd);
     virtual status_t cleanCameraFD(int socketFd);
 
+    int mCameraID;
 protected:
     /* Fixed camera information for camera2 devices. Must be valid to access if
      * mCameraDeviceVersion is >= HARDWARE_DEVICE_API_VERSION(2,0)  */
     camera_metadata_t *mCameraInfo = nullptr;
 
     /* Zero-based ID assigned to this camera. */
-    int mCameraID;
     int mCameraSocketFD = -1;
 
 private:
