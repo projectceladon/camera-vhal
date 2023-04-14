@@ -238,12 +238,12 @@ void ClientCommunicator::handleCameraInfo(uint32_t header_size) {
         }
         mValidClientCapInfo = IsValidClientCapInfo;
     }
+    sendAck();
 }
 
 
 void ClientCommunicator::sendAck() {
     ALOGVV("%s(%d) Enter", __FUNCTION__, mClientId);
-    Mutex::Autolock al(mMutex);
     size_t ack_packet_size = sizeof(camera_header_t) + sizeof(camera_ack_t);
     camera_ack_t ack_payload = ACK_CONFIG;
     camera_packet_t *ack_packet = NULL;
@@ -352,11 +352,11 @@ bool ClientCommunicator::clientThread() {
                             if ((mCameraSessionState != CameraSessionState::kCameraOpened)
                                 && (mCameraSessionState != CameraSessionState::kDecodingStarted)) {
                                 gVirtualCameraFactory.clearCameraInfo(mClientId);
-                                sendCameraCapabilities();
-			    } else {
+                            } else {
                                 ALOGE("%s(%d): Camera is in opened or decoding state,"
                                       "avoid clearing the cameras", __FUNCTION__, mClientId);
                             }
+                            sendCameraCapabilities();
                             break;
                         case CAMERA_INFO:
                             mValidClientCapInfo = false;
@@ -373,7 +373,6 @@ bool ClientCommunicator::clientThread() {
 				mNumOfCamerasRequested = (header.size) / sizeof(camera_info_t);
                                 handleCameraInfo(header.size);
                             }
-                            sendAck();
                             break;
                         case CAMERA_DATA:
                             if (!mIsConfigurationDone) {
