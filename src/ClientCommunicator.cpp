@@ -231,13 +231,14 @@ void ClientCommunicator::handleCameraInfo(uint32_t header_size) {
                   && (mCameraSessionState != CameraSessionState::kDecodingStarted)) {
                 gVirtualCameraFactory.createVirtualRemoteCamera(mVideoDecoder, mClientId,
                     camera_info[i]);
-	    } else {
+            } else {
                 ALOGE("%s(%d): Camera is already in opened or decoding state,"
                       "avoiding adding entry for other camera", __FUNCTION__, mClientId);
             }
         }
         mValidClientCapInfo = IsValidClientCapInfo;
     }
+    sendAck();
 }
 
 
@@ -340,7 +341,7 @@ bool ClientCommunicator::clientThread() {
                                  MSG_WAITALL)) > 0) {
                     ALOGVV("%s(%d): Received Header %zd bytes. Payload size: %u",
                            __FUNCTION__, mClientId, size, header.size);
-		    switch (header.type) {
+                    switch (header.type) {
                         case REQUEST_CAPABILITY:
                             if(header.size != 0) {
                                 ALOGE("%s(%d): Invalid header size for REQ_CAP packet",
@@ -352,11 +353,11 @@ bool ClientCommunicator::clientThread() {
                             if ((mCameraSessionState != CameraSessionState::kCameraOpened)
                                 && (mCameraSessionState != CameraSessionState::kDecodingStarted)) {
                                 gVirtualCameraFactory.clearCameraInfo(mClientId);
-                                sendCameraCapabilities();
-			    } else {
+                            } else {
                                 ALOGE("%s(%d): Camera is in opened or decoding state,"
                                       "avoid clearing the cameras", __FUNCTION__, mClientId);
                             }
+                            sendCameraCapabilities();
                             break;
                         case CAMERA_INFO:
                             mValidClientCapInfo = false;
@@ -370,10 +371,9 @@ bool ClientCommunicator::clientThread() {
                                 ALOGE("%s(%d): header size exceeds the max limit, size = %u",
                                     __FUNCTION__, mClientId, header.size);
                             } else {
-				mNumOfCamerasRequested = (header.size) / sizeof(camera_info_t);
+                                mNumOfCamerasRequested = (header.size) / sizeof(camera_info_t);
                                 handleCameraInfo(header.size);
                             }
-                            sendAck();
                             break;
                         case CAMERA_DATA:
                             if (!mIsConfigurationDone) {
@@ -394,7 +394,7 @@ bool ClientCommunicator::clientThread() {
                             ALOGE("%s(%d): invalid camera_packet_type: %s", __FUNCTION__, mClientId,
                                  camera_type_to_str(header.type));
                             break;
-		    }
+                    }
                     continue;
                 }
             } else {
