@@ -234,7 +234,10 @@ bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
         if (header.size == i * sizeof(camera_info_t)) {
             mNumOfCamerasRequested = i;
             break;
-        } else if (mNumOfCamerasRequested == 0 && i == MAX_NUMBER_OF_SUPPORTED_CAMERAS) {
+        } else if (header.size == 0) {
+            mNumOfCamerasRequested = 0;
+            break;
+        } else if (i == MAX_NUMBER_OF_SUPPORTED_CAMERAS) {
             ALOGE(LOG_TAG
                   "%s: Failed to support number of cameras requested by client "
                   "which is higher than the max number of cameras supported in the HAL",
@@ -244,8 +247,9 @@ bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
     }
 
     if (mNumOfCamerasRequested == 0) {
-        ALOGE(LOG_TAG "%s: invalid header size received, size = %zu", __FUNCTION__, recv_size);
-        goto out;
+        ALOGE(LOG_TAG "%s: No Camera Found", __FUNCTION__);
+        gMaxNumOfCamerasSupported = 0;
+//        goto out;
     } else {
         // Update the number of cameras globally to create camera pipeline.
         gMaxNumOfCamerasSupported = mNumOfCamerasRequested;
