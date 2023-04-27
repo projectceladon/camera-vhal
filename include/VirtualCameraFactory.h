@@ -176,8 +176,7 @@ public:
      */
     bool isConstructedOK() const { return mConstructedOK; }
 
-    bool constructVirtualCamera();
-
+private:
     /****************************************************************************
      * Private API
      ***************************************************************************/
@@ -185,9 +184,13 @@ public:
     /*
      * Creates a virtual remote camera and adds it to mVirtualCameras.
      */
+#ifdef ENABLE_FFMPEG
+    void createVirtualRemoteCamera(std::shared_ptr<CameraSocketServerThread> socket_server,
+                                   std::shared_ptr<CGVideoDecoder> decoder, int cameraId);
+#else
 void createVirtualRemoteCamera(std::shared_ptr<CameraSocketServerThread> socket_server,
                                   int cameraId);
-private:
+#endif
     /*
      * Waits till remote-props has done setup, timeout after 500ms.
      */
@@ -227,12 +230,20 @@ public:
     // Contains device open entry point, as required by HAL API.
     static struct hw_module_methods_t mCameraModuleMethods;
 
-    pthread_cond_t mSignalCapRead = PTHREAD_COND_INITIALIZER;
-    pthread_mutex_t mCapReadLock = PTHREAD_MUTEX_INITIALIZER;
-
-    std::shared_ptr<CameraSocketServerThread> mSocketServer;
 private:
+#ifdef ENABLE_FFMPEG
+    // NV12 Decoder
+    std::shared_ptr<CGVideoDecoder> mDecoder;
+#endif
+    // Socket server
+    std::shared_ptr<CameraSocketServerThread> mSocketServer;
+#ifdef ENABLE_FFMPEG
+    // NV12 Decoder
+    std::shared_ptr<CGVideoDecoder> mDecoder;
+    bool createSocketServer(std::shared_ptr<CGVideoDecoder> decoder);
+#else
     bool createSocketServer();
+#endif
 };
 
 };  // end of namespace android

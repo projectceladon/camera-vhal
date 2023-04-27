@@ -1058,7 +1058,6 @@ status_t VirtualFakeCamera3::processCaptureRequest(camera3_capture_request *requ
         settings = request->settings;
     }
 
-    srand(time(0));
     res = process3A(settings);
     if (res != OK) {
         return res;
@@ -1687,22 +1686,22 @@ status_t VirtualFakeCamera3::constructStaticInfo() {
 
     if (hasCapability(BACKWARD_COMPATIBLE)) {
         if (width == 1920 && height == 1080) {
-
             availableStreamConfigurations.insert(availableStreamConfigurations.end(),
-                                                 availableStreamConfigurations480p.begin(),
-                                                 availableStreamConfigurations480p.end());
-
-            availableStreamConfigurations.insert(availableStreamConfigurations.end(),
-                                                 availableStreamConfigurations720p.begin(),
-                                                 availableStreamConfigurations720p.end());
+                                                 availableStreamConfigurationsDefault.begin(),
+                                                 availableStreamConfigurationsDefault.end());
 
             availableStreamConfigurations.insert(availableStreamConfigurations.end(),
                                                  availableStreamConfigurations1080p.begin(),
                                                  availableStreamConfigurations1080p.end());
 
             availableStreamConfigurations.insert(availableStreamConfigurations.end(),
-                                                 availableStreamConfigurationsDefault.begin(),
-                                                 availableStreamConfigurationsDefault.end());
+                                                 availableStreamConfigurations720p.begin(),
+                                                 availableStreamConfigurations720p.end());
+
+            availableStreamConfigurations.insert(availableStreamConfigurations.end(),
+                                                 availableStreamConfigurations480p.begin(),
+                                                 availableStreamConfigurations480p.end());
+
         } else if (width == 1280 && height == 720) {
             availableStreamConfigurations.insert(availableStreamConfigurations.end(),
                                                  availableStreamConfigurationsDefault.begin(),
@@ -2962,11 +2961,9 @@ bool VirtualFakeCamera3::ReadoutThread::threadLoop() {
             }
             if (goodBuffer) {
                 // Compressor takes ownership of sensorBuffers here
-                if(mCurrentRequest.sensorBuffers != NULL) {
-                    res = mParent->mJpegCompressor->start(mCurrentRequest.sensorBuffers, this,
+                res = mParent->mJpegCompressor->start(mCurrentRequest.sensorBuffers, this,
                                                       &(mCurrentRequest.settings));
-                    goodBuffer = (res == OK);
-                }
+                goodBuffer = (res == OK);
             }
             if (goodBuffer) {
                 needJpeg = true;
@@ -3046,10 +3043,6 @@ bool VirtualFakeCamera3::ReadoutThread::threadLoop() {
     result.output_buffers = mCurrentRequest.buffers->array();
     result.input_buffer = nullptr;
     result.partial_result = 1;
-    /*Coverity Fix:  If the current camera device is not a logical multi-camera, or the
-      corresponding capture_request doesn't request on any physical camera,
-      this field must be 0*/
-    result.num_physcam_metadata=0;
 
     // Go idle if queue is empty, before sending result
     bool signalIdle = false;
@@ -3072,11 +3065,8 @@ bool VirtualFakeCamera3::ReadoutThread::threadLoop() {
     delete mCurrentRequest.buffers;
     mCurrentRequest.buffers = NULL;
     if (!needJpeg) {
-        //Coverity Fix: Condition is checked
-        if(mCurrentRequest.sensorBuffers!=NULL) {
-            delete mCurrentRequest.sensorBuffers;
-            mCurrentRequest.sensorBuffers = NULL;
-        }
+        delete mCurrentRequest.sensorBuffers;
+        mCurrentRequest.sensorBuffers = NULL;
     }
     mCurrentRequest.settings.clear();
 
@@ -3101,11 +3091,6 @@ void VirtualFakeCamera3::ReadoutThread::onJpegDone(const StreamBuffer &jpegBuffe
     result.output_buffers = &mJpegHalBuffer;
     result.input_buffer = nullptr;
     result.partial_result = 0;
-
-    /*Coverity Fix:  If the current camera device is not a logical multi-camera, or the
-      corresponding capture_request doesn't request on any physical camera,
-      this field must be 0*/
-    result.num_physcam_metadata=0;
 
     if (!success) {
         ALOGE(
