@@ -27,7 +27,6 @@
 #endif
 
 #include <fcntl.h>
-#include <pthread.h>
 #include <sys/inotify.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -47,14 +46,11 @@
 #include "VirtualCameraFactory.h"
 #include <linux/vm_sockets.h>
 #include <mutex>
-#include <exception>
 
 android::ClientVideoBuffer *android::ClientVideoBuffer::ic_instance = 0;
 
-extern android::VirtualCameraFactory gVirtualCameraFactory;
-
 namespace android {
-typedef void * (*THREADFUNCPTR)(void *);
+
 uint32_t gMaxNumOfCamerasSupported;
 
 int32_t gMaxSupportedWidth;
@@ -67,6 +63,7 @@ uint32_t gCodecType;
 uint32_t gCameraSensorOrientation;
 bool gCameraFacingBack;
 
+bool gCapabilityInfoReceived;
 bool gStartMetadataUpdate;
 bool gDoneMetadataUpdate;
 
@@ -83,15 +80,11 @@ CameraSocketServerThread::CameraSocketServerThread(std::string suffix,
     : Thread(/*canCallJava*/ false), mRunning{true}, mSocketServerFd{-1},
       mCameraSessionState{state} {
 #endif
-    pthread_t threadId;
     std::string sock_path = "/ipc/camera-socket" + suffix;
     char *k8s_env_value = getenv("K8S_ENV");
     mSocketPath = (k8s_env_value != NULL && !strcmp(k8s_env_value, "true")) ? "/conn/camera-socket"
                                                                             : sock_path.c_str();
-    int err = pthread_create(&threadId, NULL, (THREADFUNCPTR) &CameraSocketServerThread::threadFunc, this);
-    if(err)
-        ALOGE("thread create failed");
- 
+    ALOGI("%s camera socket server path is %s", __FUNCTION__, mSocketPath.c_str());
     mNumOfCamerasRequested = 0;
 }
 
@@ -167,7 +160,7 @@ void CameraSocketServerThread::setCameraResolution(uint32_t resolution) {
     setCameraMaxSupportedResolution(gCameraMaxWidth, gCameraMaxHeight);
 }
 
-bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
+bool CameraSocketServerThread::configureCapabilities() {
     ALOGVV(LOG_TAG " %s Enter", __FUNCTION__);
 
     bool status = false;
@@ -185,16 +178,15 @@ bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
     camera_packet_t *cap_packet = NULL;
     camera_packet_t *ack_packet = NULL;
     camera_header_t header = {};
-    if(!skipCapRead) {
-        if ((recv_size = recv(mClientFd, (char *)&header, sizeof(camera_header_t), MSG_WAITALL)) < 0) {
-            ALOGE(LOG_TAG "%s: Failed to receive header, err: %s ", __FUNCTION__, strerror(errno));
-            goto out;
-        }
 
-        if (header.type != REQUEST_CAPABILITY) {
-            ALOGE(LOG_TAG "%s: Invalid packet type\n", __FUNCTION__);
-            goto out;
-        }
+    if ((recv_size = recv(mClientFd, (char *)&header, sizeof(camera_header_t), MSG_WAITALL)) < 0) {
+        ALOGE(LOG_TAG "%s: Failed to receive header, err: %s ", __FUNCTION__, strerror(errno));
+        goto out;
+    }
+
+    if (header.type != REQUEST_CAPABILITY) {
+        ALOGE(LOG_TAG "%s: Invalid packet type\n", __FUNCTION__);
+        goto out;
     }
     ALOGI(LOG_TAG "%s: Received REQUEST_CAPABILITY header from client", __FUNCTION__);
 
@@ -260,8 +252,9 @@ bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
           recv_size);
     ALOGI(LOG_TAG "%s: Number of cameras requested = %d", __FUNCTION__, mNumOfCamerasRequested);
 
+    // Update status globally after received successful capability info.
+    gCapabilityInfoReceived = true;
 
-    gVirtualCameraFactory.constructVirtualCamera();
     // validate capability info received from the client.
     for (int i = 0; i < mNumOfCamerasRequested; i++) {
         expctd_cam_id = i;
@@ -413,12 +406,18 @@ bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
                   "hence selected default",
                   __FUNCTION__);
         }
-        gVirtualCameraFactory.createVirtualRemoteCamera(gVirtualCameraFactory.mSocketServer, camera_id);
+
+        // Start updating metadata for one camera, so update the status.
+        gStartMetadataUpdate = true;
+
+        // Wait till complete the metadata update for a camera.
+        while (!gDoneMetadataUpdate) {
+            ALOGVV("%s: wait till complete the metadata update for a camera", __FUNCTION__);
+            // 200us sleep for this thread.
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
     }
 
-    pthread_cond_signal(&gVirtualCameraFactory.mSignalCapRead);
-    pthread_mutex_unlock(&gVirtualCameraFactory.mCapReadLock);
- 
     ack_packet = (camera_packet_t *)malloc(ack_packet_size);
     if (ack_packet == NULL) {
         ALOGE(LOG_TAG "%s: ack camera_packet_t allocation failed: %d ", __FUNCTION__, __LINE__);
@@ -447,13 +446,7 @@ out:
 }
 
 bool CameraSocketServerThread::threadLoop() {
-    return true;
-}
-#define SIZE_FRAME_MAX              (4294967295U)
-
-void* CameraSocketServerThread::threadFunc(void *arg) {
-    struct sockaddr_un addr_un;
-    CameraSocketServerThread *threadParam = (CameraSocketServerThread *)arg;
+ struct sockaddr_un addr_un;
     memset(&addr_un, 0, sizeof(addr_un));
     addr_un.sun_family = AF_UNIX;
     int ret = 0;
@@ -482,64 +475,52 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
     }
     if(trans_mode == UNIX)
     {
-        threadParam->mSocketServerFd = ::socket(AF_UNIX, SOCK_STREAM, 0);
-        if (threadParam->mSocketServerFd < 0) {
+        mSocketServerFd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        if (mSocketServerFd < 0) {
             ALOGV("%s:%d Fail to construct camera socket with error: %s", __FUNCTION__, __LINE__,
               strerror(errno));
-            return NULL;
-        }
+        return false;
+    }
 
     struct sockaddr_un addr_un;
     memset(&addr_un, 0, sizeof(addr_un));
     addr_un.sun_family = AF_UNIX;
+    strncpy(&addr_un.sun_path[0], mSocketPath.c_str(), strlen(mSocketPath.c_str()));
 
-    if(strlen(threadParam->mSocketPath.c_str()) <= UNIX_PATH_MAX)
-        strncpy(&addr_un.sun_path[0], threadParam->mSocketPath.c_str(), strlen(threadParam->mSocketPath.c_str()));
-    else
-        ALOGE("%s: Invalid mSocketPath of size %zu",__FUNCTION__,strlen(threadParam->mSocketPath.c_str()));
     int ret = 0;
-
-    try{
-        ret = unlink(threadParam->mSocketPath.c_str());
-    }catch(const std::exception &e)
-    {
-        ALOGE("%s The unlink errno is %s",__FUNCTION__,strerror(errno));
+    if ((access(mSocketPath.c_str(), F_OK)) != -1) {
+        ALOGI(" %s camera socket server file is %s", __FUNCTION__, mSocketPath.c_str());
+        ret = unlink(mSocketPath.c_str());
+        if (ret < 0) {
+            ALOGE(LOG_TAG " %s Failed to unlink %s address %d, %s", __FUNCTION__,
+                  mSocketPath.c_str(), ret, strerror(errno));
+            return false;
+        }
+    } else {
+        ALOGV(LOG_TAG " %s camera socket server file %s will created. ", __FUNCTION__,
+              mSocketPath.c_str());
     }
 
-    if (ret<0 &&( (errno != ENOENT) || errno !=EPERM || errno != ENOTDIR) ) {
-        ALOGE(LOG_TAG " %s Failed to unlink %s address %d, %s", __FUNCTION__,
-            threadParam->mSocketPath.c_str(), ret, strerror(errno));
-            return NULL;
-    }
-
-    ALOGV(LOG_TAG " %s camera socket server file %s will created. ", __FUNCTION__,
-        threadParam->mSocketPath.c_str());
-
-    ret = ::bind(threadParam->mSocketServerFd, (struct sockaddr *)&addr_un,
-                 sizeof(sa_family_t) + strlen(threadParam->mSocketPath.c_str()) + 1);
+    ret = ::bind(mSocketServerFd, (struct sockaddr *)&addr_un,
+                 sizeof(sa_family_t) + strlen(mSocketPath.c_str()) + 1);
     if (ret < 0) {
-        ALOGE(LOG_TAG " %s Failed to bind %s address %d, %s", __FUNCTION__, threadParam->mSocketPath.c_str(),
+        ALOGE(LOG_TAG " %s Failed to bind %s address %d, %s", __FUNCTION__, mSocketPath.c_str(),
               ret, strerror(errno));
-        return NULL;
+        return false;
     }
 
     struct stat st;
     __mode_t mod = S_IRWXU | S_IRWXG | S_IRWXO;
-    if (fstat(threadParam->mSocketServerFd, &st) == 0) {
+    if (fstat(mSocketServerFd, &st) == 0) {
         mod |= st.st_mode;
     }
-    if(chmod(threadParam->mSocketPath.c_str(), mod) < 0) {
-        ALOGE("%s fail to chmod",__FUNCTION__);
-        return NULL;
-    }
-    if(stat(threadParam->mSocketPath.c_str(), &st) < 0) {
-        ALOGE("%s fail to statd",__FUNCTION__);
-        return NULL;
-    }
-        ret = listen(threadParam->mSocketServerFd, 5);
+    chmod(mSocketPath.c_str(), mod);
+    stat(mSocketPath.c_str(), &st);
+
+        ret = listen(mSocketServerFd, 5);
         if (ret < 0) {
-            ALOGE("%s Failed to listen on %s", __FUNCTION__, threadParam->mSocketPath.c_str());
-            return NULL;
+            ALOGE("%s Failed to listen on %s", __FUNCTION__, mSocketPath.c_str());
+            return false;
         }
     }
     else if(trans_mode == TCP){
@@ -547,33 +528,33 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
         int new_client_fd =-1;
         int port = 8085;
         int so_reuseaddr = 1;
-        threadParam->mSocketServerFd = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (threadParam->mSocketServerFd < 0) {
+        mSocketServerFd = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (mSocketServerFd < 0) {
             ALOGV(LOG_TAG " %s:Line:[%d] Fail to construct camera socket with error: [%s]",
             __FUNCTION__, __LINE__, strerror(errno));
-            return NULL;
+            return false;
         }
-        if (setsockopt(threadParam->mSocketServerFd, SOL_SOCKET, SO_REUSEADDR, &so_reuseaddr,
+        if (setsockopt(mSocketServerFd, SOL_SOCKET, SO_REUSEADDR, &so_reuseaddr,
                    sizeof(int)) < 0) {
              ALOGV(LOG_TAG " %s setsockopt(SO_REUSEADDR) failed. : %d\n", __func__,
-            threadParam->mSocketServerFd);
-            return NULL;
+            mSocketServerFd);
+            return false;
         }
         addr_ip.sin_family = AF_INET;
         addr_ip.sin_addr.s_addr = htonl(INADDR_ANY);
         addr_ip.sin_port = htons(port);
 
-        ret = ::bind(threadParam->mSocketServerFd, (struct sockaddr *)&addr_ip,
+        ret = ::bind(mSocketServerFd, (struct sockaddr *)&addr_ip,
                sizeof(struct sockaddr_in));
         if (ret < 0) {
             ALOGV(LOG_TAG " %s Failed to bind port(%d). ret: %d, %s", __func__, port, ret,
             strerror(errno));
-            return NULL;
+            return false;
         }
-        ret = listen(threadParam->mSocketServerFd, 5);
+        ret = listen(mSocketServerFd, 5);
         if (ret < 0) {
             ALOGV("%s Failed to listen on ", __FUNCTION__);
-            return NULL;
+            return false;
         }
     }else{
         memset(&addr_ip, 0, sizeof(addr_ip));
@@ -582,57 +563,57 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
         addr_vm.svm_cid = 3;
         int ret = 0;
         int so_reuseaddr = 1;
-        threadParam->size_update = 0;
-        threadParam->mSocketServerFd = ::socket(AF_VSOCK, SOCK_STREAM, 0);
-        if (threadParam->mSocketServerFd < 0) {
+        size_update = 0;
+        mSocketServerFd = ::socket(AF_VSOCK, SOCK_STREAM, 0);
+        if (mSocketServerFd < 0) {
         ALOGV(LOG_TAG " %s:Line:[%d] Fail to construct camera socket with error: [%s]",
         __FUNCTION__, __LINE__, strerror(errno));
-        return NULL;
+        return false;
         }
-        ret = ::bind(threadParam->mSocketServerFd, (struct sockaddr *)&addr_vm,
+        ret = ::bind(mSocketServerFd, (struct sockaddr *)&addr_vm,
             sizeof(struct sockaddr_vm));
         if (ret < 0) {
             ALOGV(LOG_TAG " %s Failed to bind port(%d). ret: %d, %s", __func__, addr_vm.svm_port, ret,
             strerror(errno));
-            return NULL;
+            return false;
         }
-        ret = listen(threadParam->mSocketServerFd, 32);
+        ret = listen(mSocketServerFd, 32);
         if (ret < 0) {
         ALOGV("%s Failed to listen on ", __FUNCTION__);
-        return NULL;
+        return false;
         }
 
     }
-    while (threadParam->mRunning) {
+    while (mRunning) {
         ALOGI(LOG_TAG " %s: Wait for camera client to connect. . .", __FUNCTION__);
 
         if (trans_mode == TCP) {
             socklen_t alen = sizeof(struct sockaddr_in);
-            new_client_fd = ::accept(threadParam->mSocketServerFd, (struct sockaddr *)&addr_ip, &alen);
+            new_client_fd = ::accept(mSocketServerFd, (struct sockaddr *)&addr_ip, &alen);
         }
         else if(trans_mode == VSOCK){
             socklen_t alen = sizeof(struct sockaddr_vm);
-            new_client_fd = ::accept(threadParam->mSocketServerFd, (struct sockaddr *)&addr_vm, &alen);
+            new_client_fd = ::accept(mSocketServerFd, (struct sockaddr *)&addr_vm, &alen);
         }
         else
         {
             socklen_t alen = sizeof(struct sockaddr_un);
-            new_client_fd = ::accept(threadParam->mSocketServerFd, (struct sockaddr *)&addr_un, &alen);
+            new_client_fd = ::accept(mSocketServerFd, (struct sockaddr *)&addr_un, &alen);
         }
         ALOGI(LOG_TAG " %s: Accepted client: [%d]", __FUNCTION__, new_client_fd);
         if (new_client_fd < 0) {
             ALOGE(LOG_TAG " %s: Fail to accept client. Error: [%s]", __FUNCTION__, strerror(errno));
             continue;
         }
-        threadParam->mClientFd = new_client_fd;
+        mClientFd = new_client_fd;
 
         bool status = false;
-        status = threadParam->configureCapabilities(false);
+        status = configureCapabilities();
         if (status) {
             ALOGI(LOG_TAG
                   "%s: Capability negotiation and metadata update"
                   "for %d camera(s) completed successfully..",
-                  __FUNCTION__, threadParam->mNumOfCamerasRequested);
+                  __FUNCTION__, mNumOfCamerasRequested);
         }
 
         ClientVideoBuffer *handle = ClientVideoBuffer::getClientInstance();
@@ -643,7 +624,7 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
         struct pollfd fd;
         int event;
 
-        fd.fd = threadParam->mClientFd;  // your socket handler
+        fd.fd = mClientFd;  // your socket handler
         fd.events = POLLIN | POLLHUP;
 
         while (true) {
@@ -656,39 +637,34 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
                 // connnection disconnected => socket is closed at the other end => close the
                 // socket.
                 ALOGE(LOG_TAG " %s: POLLHUP: Close camera socket connection", __FUNCTION__);
-                shutdown(threadParam->mClientFd, SHUT_RDWR);
-                close(threadParam->mClientFd);
-                threadParam->mClientFd = -1;
+                shutdown(mClientFd, SHUT_RDWR);
+                close(mClientFd);
+                mClientFd = -1;
                 handle->reset();
                 break;
             } else if (event & POLLIN) {  // preview / record
                 // data is available in socket => read data
                 if (gIsInFrameI420) {
-                    if(trans_mode == VSOCK){
-                        ssize_t size_header =0;
-                        size_t size_pending =0;
+                     if(trans_mode == VSOCK){
+                        int size_header =0; 
+                        ssize_t size_pending =0; 
                         //Check if the header type is data
                         camera_header_t buffer_header = {};
-                        size_header = recv(threadParam->mClientFd, (char *)&buffer_header, sizeof(camera_header_t), 0);
+                        size_header = recv(mClientFd, (char *)&buffer_header, sizeof(camera_header_t), 0);
                         if(buffer_header.type == CAMERA_DATA){
-                            size_pending = (size_t)buffer_header.size;
-
-                            if(size_pending > SIZE_FRAME_MAX) {
-                                ALOGE("Invalid frame size %zu\n",size_pending);
-                                continue;
+                          size_pending = buffer_header.size;
+                        while(size_pending != 0){
+                            ssize_t size_data = 0;
+                            size_data = recv(mClientFd, (char *)fbuffer+size_update, size_pending, 0);
+                            if(size_data < 0){
+                               //error handling while in preview
+                               ALOGE(LOG_TAG "entered into recv error, break to recover");
+                               continue;
                             }
-                            while(size_pending > 0){
-                                ssize_t size_data = 0;
-                                size_data = recv(threadParam->mClientFd, (char *)fbuffer+threadParam->size_update, size_pending, 0);
-                                if(size_data < 0){
-                                    //error handling while in preview
-                                   ALOGE(LOG_TAG "entered into recv error, break to recover");
-                                   continue;
-                                }
-                                threadParam->size_update += size_data;
-                                size_pending -= size_data;
-                                if (size_pending <= 0){
-                                    handle->clientRevCount++;
+                            size_update += size_data;
+                            size_pending -= size_data;
+                            if (size_pending == 0){
+                                handle->clientRevCount++;
 #if 0
                                 FILE *fp_dump = fopen("/data/dump.yuv","w");
                                 if(fp_dump != NULL){
@@ -696,42 +672,38 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
                                 fclose(fp_dump);
                                 }
 #endif
-                                    threadParam->size_update = 0;
-                                    ALOGV(LOG_TAG "[I420] %s: Packet rev %d and size %zd",
-                                       __FUNCTION__, handle->clientRevCount, size_data);
-                                    break;
-                                }
-                            }
-                        } else if(buffer_header.type == REQUEST_CAPABILITY){
-                            ALOGE("Calling request Capability \n");
-                            if(!threadParam->configureCapabilities(true)) {
-                                return NULL;
-                            }
-                        } else
-                            ALOGE("received NOT OK");
-                        }else{
-                            ssize_t size = 0;
-
-                            if ((size = recv(threadParam->mClientFd, (char *)fbuffer, 460800, MSG_WAITALL)) > 0) {
-                                handle->clientRevCount++;
-                                ALOGVV(LOG_TAG "[I420] %s: Pocket rev %d and size %zd",
-                                    __FUNCTION__, handle->clientRevCount, size);
+                                size_update = 0;
+                                
+                                ALOGV(LOG_TAG
+                                   "[I420] %s: Packet rev %d and "
+                                   "size %zd",    
+                                   __FUNCTION__, handle->clientRevCount, size_data);
+                               break;
                             }
                         }
-                    } else if (gIsInFrameMJPG) {
+                     }else
+                         ALOGE("received NOT OK");
+                       
+                    }else{
+                    ssize_t size = 0;
 
-                    ssize_t size_header =0;
-                    size_t size_pending =0;
+                    if ((size = recv(mClientFd, (char *)fbuffer, 460800, MSG_WAITALL)) > 0) {
+                        handle->clientRevCount++;
+                        ALOGVV(LOG_TAG
+                               "[I420] %s: Pocket rev %d and "
+                               "size %zd",
+                               __FUNCTION__, handle->clientRevCount, size);
+                        } 
+                    }
+                } else if (gIsInFrameMJPG) { 
+
+                    int size_header =0; 
+                    ssize_t size_pending =0;
                     ALOGI("it is MJPG irecv the header");
                     camera_header_t buffer_header = {};
-                    size_header = recv(threadParam->mClientFd, (char *)&buffer_header, sizeof(camera_header_t), 0);
+                    size_header = recv(mClientFd, (char *)&buffer_header, sizeof(camera_header_t), 0);
                     if (buffer_header.type == CAMERA_DATA) {
-                         size_pending = buffer_header.size;
-                         if(size_pending >  SIZE_FRAME_MAX) {
-                             ALOGE("Invalid frame size %zu\n",size_pending);
-                             continue;
-                         }
-                         uint8_t *mjpeg_buffer = (uint8_t *)malloc(size_pending);
+                         uint8_t *mjpeg_buffer = (uint8_t *)malloc(buffer_header.size);
                          if (mjpeg_buffer == NULL) {
                              ALOGE(LOG_TAG "%s: buffer allocation failed: %d ", __FUNCTION__, __LINE__);
                              continue;
@@ -741,17 +713,17 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
                          while (size_pending != 0) {
                              ssize_t size_data = 0;
                              ALOGI("it is MJPG recv buffer %zd", size_pending);
-                             size_data = recv(threadParam->mClientFd, (char *)mjpeg_buffer+threadParam->size_update, size_pending, 0);
+                             size_data = recv(mClientFd, (char *)mjpeg_buffer+size_update, size_pending, 0);
                              if (size_data < 0) {
                                  //error handling while in preview
                                  ALOGE(LOG_TAG "entered into recv error, break to recover");
                                  continue;
                               }
-                              threadParam->size_update += size_data;
+                              size_update += size_data;
                               size_pending -= size_data;
                               if (size_pending == 0) {
                                   handle->clientRevCount++;
-                                  threadParam->size_update = 0;
+                                  size_update = 0;
                                  
                                   ALOGV(LOG_TAG
                                       "[MJPEG] %s: Packet rev %d and "
@@ -769,11 +741,6 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
                               ALOGE("updated fail to convert MJPG to I420 ret %d  and sz %d", res, buffer_header.size);
                           }
                           free(mjpeg_buffer);
-                    } else if(buffer_header.type == REQUEST_CAPABILITY){
-                        ALOGE("Calling request Capability \n");
-                        if(!threadParam->configureCapabilities(true)) {
-                            return NULL;
-                        }
                     } else
                         ALOGE("MJPEG received NOT OK");
                 } else if (gIsInFrameH264) {  // default H264
@@ -866,15 +833,14 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
             }
         }
     }
-    ALOGE(" %s: Quit CameraSocketServerThread... %s(%d)", __FUNCTION__, threadParam->mSocketPath.c_str(),
-          threadParam->mClientFd);
-    shutdown(threadParam->mClientFd, SHUT_RDWR);
-    close(threadParam->mClientFd);
-    threadParam->mClientFd = -1;
-    close(threadParam->mSocketServerFd);
-    threadParam->mSocketServerFd = -1;
-
-    return threadParam;
+    ALOGE(" %s: Quit CameraSocketServerThread... %s(%d)", __FUNCTION__, mSocketPath.c_str(),
+          mClientFd);
+    shutdown(mClientFd, SHUT_RDWR);
+    close(mClientFd);
+    mClientFd = -1;
+    close(mSocketServerFd);
+    mSocketServerFd = -1;
+    return true;
 }
 
 }  // namespace android

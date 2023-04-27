@@ -21,9 +21,7 @@
 #include <log/log.h>
 #include <libexif/exif-data.h>
 
-Compressor::Compressor() {
-    memset(&mCompressInfo, 0, sizeof(mCompressInfo));
-}
+Compressor::Compressor() {}
 
 bool Compressor::compress(const unsigned char *data, int width, int height, int quality,
                           ExifData *exifData) {

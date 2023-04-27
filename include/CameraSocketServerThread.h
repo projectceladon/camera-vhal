@@ -60,16 +60,13 @@ public:
     virtual void requestExit();
     virtual status_t requestExitAndWait();
     int getClientFd();
-    void setClientFd(int fd);
     ssize_t size_update = 0;
-    static void* threadFunc(void * arg);
-    
-    bool configureCapabilities(bool skipCapRead);
 
 private:
     virtual status_t readyToRun();
     virtual bool threadLoop() override;
 
+    bool configureCapabilities();
     void setCameraResolution(uint32_t resolution);
     void setCameraMaxSupportedResolution(int32_t width, int32_t height);
 
