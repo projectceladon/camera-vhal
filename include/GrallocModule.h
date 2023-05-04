@@ -34,7 +34,6 @@
 
 #ifdef USE_GRALLOC1
 #include <hardware/gralloc1.h>
-#include <sync/sync.h>
 #endif
 
 class GrallocModule {
@@ -129,8 +128,7 @@ public:
                 int32_t fenceFd = -1;
                 int error = m_gralloc1_unlock(m_gralloc1_device, handle, &fenceFd);
                 if (!error) {
-                    sync_wait(fenceFd, -1);
-                    close(fenceFd);
+                    ALOGVV("m_gralloc1_unlock failed");
                 }
                 return error;
             }
@@ -138,6 +136,42 @@ public:
             default: {
                 ALOGE(
                     "[Gralloc] no gralloc module to unlock; unknown gralloc major "
+                    "version (%d)",
+                    m_major_version);
+                return -1;
+            }
+        }
+    }
+
+    int importBuffer(buffer_handle_t handle, buffer_handle_t *outBuffer) {
+        switch (m_major_version) {
+            case 1:
+#ifdef USE_GRALLOC1
+            {
+                return m_gralloc1_importbuffer(m_gralloc1_device, handle, outBuffer);
+            }
+#endif
+            default: {
+                ALOGE(
+                    "[Gralloc] no gralloc module to import; unknown gralloc major "
+                    "version (%d)",
+                    m_major_version);
+                return -1;
+            }
+        }
+    }
+
+    int release(buffer_handle_t handle) {
+        switch (m_major_version) {
+            case 1:
+#ifdef USE_GRALLOC1
+            {
+                return m_gralloc1_release(m_gralloc1_device, handle);
+            }
+#endif
+            default: {
+                ALOGE(
+                    "[Gralloc] no gralloc module to release; unknown gralloc major "
                     "version (%d)",
                     m_major_version);
                 return -1;
@@ -171,6 +205,10 @@ private:
                     m_gralloc1_getNumFlexPlanes =
                         (GRALLOC1_PFN_GET_NUM_FLEX_PLANES)m_gralloc1_device->getFunction(
                             m_gralloc1_device, GRALLOC1_FUNCTION_GET_NUM_FLEX_PLANES);
+                    m_gralloc1_importbuffer = (GRALLOC1_PFN_IMPORT_BUFFER)m_gralloc1_device->getFunction(
+                            m_gralloc1_device, GRALLOC1_FUNCTION_IMPORT_BUFFER);
+                    m_gralloc1_release = (GRALLOC1_PFN_RELEASE)m_gralloc1_device->getFunction(
+                            m_gralloc1_device, GRALLOC1_FUNCTION_RELEASE);
                     break;
 #endif
                 default:
@@ -187,6 +225,8 @@ private:
     GRALLOC1_PFN_UNLOCK m_gralloc1_unlock = nullptr;
     GRALLOC1_PFN_LOCK_FLEX m_gralloc1_lockflex = nullptr;
     GRALLOC1_PFN_GET_NUM_FLEX_PLANES m_gralloc1_getNumFlexPlanes = nullptr;
+    GRALLOC1_PFN_IMPORT_BUFFER m_gralloc1_importbuffer = nullptr;
+    GRALLOC1_PFN_RELEASE m_gralloc1_release = nullptr;
 #endif
 };
 

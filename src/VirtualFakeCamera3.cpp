@@ -1033,6 +1033,7 @@ status_t VirtualFakeCamera3::processCaptureRequest(camera3_capture_request *requ
 
     // Process all the buffers we got for output, constructing internal buffer
     // structures for them, and lock them for writing.
+    buffer_handle_t outBuffer = nullptr;
     for (size_t i = 0; i < request->num_output_buffers; i++) {
         const camera3_stream_buffer &srcBuf = request->output_buffers[i];
         StreamBuffer destBuf;
@@ -1079,6 +1080,7 @@ status_t VirtualFakeCamera3::processCaptureRequest(camera3_capture_request *requ
             ALOGE("%s: Request %d: Buffer %zu: Fence timed out after %d ms", __FUNCTION__,
                   frameNumber, i, kFenceTimeoutMs);
         }
+        destBuf.rawHandle = native_handle_clone(*(destBuf.buffer));
         if (res == OK) {
             // Lock buffer for writing
             if (srcBuf.stream->format == HAL_PIXEL_FORMAT_YCbCr_420_888 ||
@@ -1086,7 +1088,13 @@ status_t VirtualFakeCamera3::processCaptureRequest(camera3_capture_request *requ
                 if (destBuf.format == HAL_PIXEL_FORMAT_YCbCr_420_888 ||
                     destBuf.format == HAL_PIXEL_FORMAT_YCrCb_420_SP) {
                     android_ycbcr ycbcr = android_ycbcr();
-                    res = GrallocModule::getInstance().lock_ycbcr(*(destBuf.buffer),
+
+                    res = GrallocModule::getInstance().importBuffer(destBuf.rawHandle, &outBuffer);
+                    if (res != OK) {
+                        ALOGE("%s:%d Gralloc importBuffer failed",__FUNCTION__, __LINE__);
+                        res = INVALID_OPERATION;
+                    } else {
+                        res = GrallocModule::getInstance().lock_ycbcr(destBuf.rawHandle,
 #ifdef USE_GRALLOC1
                                                                   GRALLOC1_PRODUCER_USAGE_CPU_WRITE,
 #else
@@ -1094,13 +1102,19 @@ status_t VirtualFakeCamera3::processCaptureRequest(camera3_capture_request *requ
 #endif
                                                                   0, 0, destBuf.width,
                                                                   destBuf.height, &ycbcr);
-                    destBuf.img = static_cast<uint8_t *>(ycbcr.y);
+                        destBuf.img = static_cast<uint8_t *>(ycbcr.y);
+                    }
                 } else {
                     ALOGE("Unexpected private format for flexible YUV: 0x%x", destBuf.format);
                     res = INVALID_OPERATION;
                 }
             } else {
-                res = GrallocModule::getInstance().lock(*(destBuf.buffer),
+                res = GrallocModule::getInstance().importBuffer(destBuf.rawHandle, &outBuffer);
+                if (res != OK) {
+                    ALOGE("%s:%d Gralloc importBuffer failed",__FUNCTION__, __LINE__);
+                    res = INVALID_OPERATION;
+                } else {
+                    res = GrallocModule::getInstance().lock(destBuf.rawHandle,
 #ifdef USE_GRALLOC1
                                                         GRALLOC1_PRODUCER_USAGE_CPU_WRITE,
 #else
@@ -1108,6 +1122,7 @@ status_t VirtualFakeCamera3::processCaptureRequest(camera3_capture_request *requ
 #endif
                                                         0, 0, destBuf.width, destBuf.height,
                                                         (void **)&(destBuf.img));
+                }
             }
             if (res != OK) {
                 ALOGE("%s: Request %d: Buffer %zu: Unable to lock buffer", __FUNCTION__,
@@ -1122,8 +1137,10 @@ status_t VirtualFakeCamera3::processCaptureRequest(camera3_capture_request *requ
         if (res != OK) {
             // Either waiting or locking failed. Unlock locked buffers and bail
             // out.
-            for (size_t j = 0; j < i; j++) {
-                GrallocModule::getInstance().unlock(*(request->output_buffers[i].buffer));
+            for (size_t j = 0; j < sensorBuffers->size(); j++) {
+                const StreamBuffer &b = (*sensorBuffers)[j];
+                GrallocModule::getInstance().unlock(b.rawHandle);
+                GrallocModule::getInstance().release(b.rawHandle);
             }
             delete sensorBuffers;
             delete buffers;
@@ -2720,7 +2737,6 @@ bool VirtualFakeCamera3::ReadoutThread::threadLoop() {
                   res);
             // fallthrough for cleanup
         }
-        GrallocModule::getInstance().unlock(*(buf->buffer));
 
         buf->status = goodBuffer ? CAMERA3_BUFFER_STATUS_OK : CAMERA3_BUFFER_STATUS_ERROR;
         buf->acquire_fence = -1;
@@ -2775,6 +2791,13 @@ bool VirtualFakeCamera3::ReadoutThread::threadLoop() {
 
     // Send it off to the framework
     ALOGVV("%s: ReadoutThread: Send result to framework", __FUNCTION__);
+    if (mCurrentRequest.sensorBuffers != NULL) {
+        for (int i = 0; i < mCurrentRequest.sensorBuffers->size(); i++) {
+            const StreamBuffer &b = (*mCurrentRequest.sensorBuffers)[i];
+            GrallocModule::getInstance().unlock(b.rawHandle);
+            GrallocModule::getInstance().release(b.rawHandle);
+        }
+    }
     mParent->sendCaptureResult(&result);
 
     // Clean up
@@ -2794,7 +2817,8 @@ bool VirtualFakeCamera3::ReadoutThread::threadLoop() {
 void VirtualFakeCamera3::ReadoutThread::onJpegDone(const StreamBuffer &jpegBuffer, bool success) {
     Mutex::Autolock jl(mJpegLock);
 
-    GrallocModule::getInstance().unlock(*(jpegBuffer.buffer));
+    GrallocModule::getInstance().unlock(jpegBuffer.rawHandle);
+    GrallocModule::getInstance().release(jpegBuffer.rawHandle);
 
     mJpegHalBuffer.status = success ? CAMERA3_BUFFER_STATUS_OK : CAMERA3_BUFFER_STATUS_ERROR;
     mJpegHalBuffer.acquire_fence = -1;
