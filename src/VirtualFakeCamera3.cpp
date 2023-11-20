@@ -209,7 +209,10 @@ status_t VirtualFakeCamera3::sendCommandToClient(camera_cmd_t cmd) {
     camera_config_cmd_t config_cmd = {};
     config_cmd.version = CAMERA_VHAL_VERSION_2;
     config_cmd.cmd = cmd;
+    char prop_val[PROPERTY_VALUE_MAX] = {'\0'};
+    property_get("vendor.camera.app.name", prop_val, "false");
     config_cmd.config.cameraId = mCameraID;
+    strncpy(config_cmd.config.pkg_name, prop_val, PROPERTY_VALUE_MAX);
     config_cmd.config.codec_type = mCodecType;
     config_cmd.config.resolution = mDecoderResolution;
 
@@ -232,11 +235,22 @@ status_t VirtualFakeCamera3::sendCommandToClient(camera_cmd_t cmd) {
     memcpy(config_cmd_packet->payload, &config_cmd, sizeof(camera_config_cmd_t));
 
     ALOGI("%s: Camera client fd %d!", __FUNCTION__, client_fd);
+ALOGI("%s: Camera client fd %d! camera id %d", __FUNCTION__, client_fd, config_cmd.config.cameraId);
+#ifdef USE_PIPE
+ALOGE("Shiva use pipe \n");
+    if (write(client_fd, config_cmd_packet, config_cmd_packet_size) < 0) {
+        ALOGE(LOG_TAG "%s: Failed to send Camera %s command to client, err %s ", __FUNCTION__,
+              (cmd == camera_cmd_t::CMD_CLOSE) ? "CloseCamera" : "OpenCamera", strerror(errno));
+        goto out;
+    }
+
+#else
     if (send(client_fd, config_cmd_packet, config_cmd_packet_size, 0) < 0) {
         ALOGE(LOG_TAG "%s: Failed to send Camera %s command to client, err %s ", __FUNCTION__,
               (cmd == camera_cmd_t::CMD_CLOSE) ? "CloseCamera" : "OpenCamera", strerror(errno));
         goto out;
     }
+#endif
 
     ALOGI("%s: Sent cmd %s to client %d!", __FUNCTION__,
           (cmd == camera_cmd_t::CMD_CLOSE) ? "CloseCamera" : "OpenCamera", client_fd);
@@ -1459,6 +1473,7 @@ status_t VirtualFakeCamera3::constructStaticInfo() {
     ADD_STATIC_ENTRY(ANDROID_SENSOR_INFO_ACTIVE_ARRAY_SIZE, activeArray, 4);
 
     int32_t orientation = gCameraSensorOrientation;
+    orientation = 0;
     ADD_STATIC_ENTRY(ANDROID_SENSOR_ORIENTATION, &orientation, 1);
 
     static const uint8_t timestampSource = ANDROID_SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME;

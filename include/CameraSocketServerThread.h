@@ -35,6 +35,7 @@
 #endif
 #include "CameraSocketCommand.h"
 #include <linux/vm_sockets.h>
+#include "VirtualBuffer.h"
 
 namespace android {
 
@@ -43,6 +44,7 @@ enum tranSock
     UNIX  = 0,
     TCP   = 1,
     VSOCK = 2,
+    PIPE = 3,
 };
 
 class VirtualCameraFactory;
@@ -64,11 +66,20 @@ public:
     ssize_t size_update = 0;
     static void* threadFunc(void * arg);
     
+    pthread_cond_t mSignalHotplug = PTHREAD_COND_INITIALIZER;
+    pthread_mutex_t mHotplugLock = PTHREAD_MUTEX_INITIALIZER;
+
+
+    int UpdateCameraInfo();
+
     bool configureCapabilities(bool skipCapRead);
 
 private:
     virtual status_t readyToRun();
     virtual bool threadLoop() override;
+    bool ProcessCameraDataFromPipe(ClientVideoBuffer *handle);
+    ssize_t recvData(int handle, char *pkt, int size, int flag);
+    ssize_t sendData(int handle, char *pkt, int size, int flag);
 
     void setCameraResolution(uint32_t resolution);
     void setCameraMaxSupportedResolution(int32_t width, int32_t height);

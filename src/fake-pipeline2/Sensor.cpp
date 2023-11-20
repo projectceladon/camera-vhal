@@ -253,8 +253,84 @@ status_t Sensor::readyToRun() {
     return OK;
 }
 
+
+int getRotation(int *frontRot, int *backRot){
+
+    char *jsonString;
+    char *parseString;
+    FILE *fptr;
+    *frontRot = -1;
+    *backRot = -1;
+    char prop_val[PROPERTY_VALUE_MAX] = {'\0'};
+    property_get("vendor.camera.app.name", prop_val, "false");
+    char filePath[512] = "/data/share/config/";
+    strcat(filePath, prop_val);
+    strcat(filePath, ".conf");
+    ALOGV(" %s\n", filePath);
+    fptr = fopen(filePath,"rb");
+    if(fptr) {
+        ALOGV(" file open success \n");
+        fseek (fptr, 0, SEEK_END);
+        int length = ftell (fptr);
+        fseek (fptr, 0, SEEK_SET);
+        jsonString = (char*)malloc (length + 1);
+        if(jsonString) {
+            fread(jsonString, 1, length, fptr);
+            ALOGV("file content %s\n", jsonString);
+            jsonString[length] = '\0';
+            parseString  = strstr(jsonString, "camera_config");
+            char rotFrontValue[128];
+            char rotBackValue[128];
+            if(parseString) {
+                char *frontString  = strstr(parseString, "front_preview_rotation");
+                if(frontString != NULL) {
+                    frontString  = strstr(frontString, ":");
+                    int i = 1;
+                    char separator = ',';
+                     while (frontString[i] != '\0') {
+                         if (frontString[i] != separator) {
+                             rotFrontValue[i-1] = frontString[i]; 
+                         } else {
+                             rotFrontValue[i-1] = '\0';
+                             break;
+                         }
+                         i++;
+                     }
+                     ALOGV("front rotation %s\n",rotFrontValue);
+                }
+
+                char *backString  = strstr(parseString, "back_preview_rotation");
+                if(backString != NULL) {
+                    backString  = strstr(backString, ":");
+                    int i = 1;
+                    char separator = '}';
+                    while (backString[i] != '\0') {
+                        if (backString[i] != separator) {
+                            rotBackValue[i-1] = backString[i]; 
+                        } else {
+                            rotBackValue[i-1] = '\0';
+                            break;
+                        }
+                        i++;
+                    }
+                    ALOGV("back rotation %s\n",rotBackValue);
+                }
+            }
+            *frontRot = atoi(rotFrontValue);
+            *backRot = atoi(rotBackValue);
+        }
+        free(jsonString);
+        fclose(fptr);
+    } else {
+        ALOGE("Fail to open folder \n");
+    }
+return 0;
+}
+
+
+
 //#define CROP_ROTATE
-#ifdef CROP_ROTATE
+#ifdef CROP_ROTATE_1
 void bufferCropAndRotate(unsigned char * buff, unsigned char * buff_out){
 //
 //   Original frame                  Cropped frame              Rotated frame                 Upscale frame
@@ -319,6 +395,114 @@ void bufferCropAndRotate(unsigned char * buff, unsigned char * buff_out){
 }
 char buffer_recv[640*480*3/2];
 #endif
+
+
+#define CROP_ROTATE
+#ifdef CROP_ROTATE
+
+void bufferCropAndRotate(unsigned char * buff, unsigned char * buff_out, int height, int width){
+//
+//   Original frame                  Cropped frame              Rotated frame                 Upscale frame
+// --------------------               --------                                              --------------------
+// |     |      |     |               |      |                 ---------------              |     |      |     |
+// |     |      |     |               |      |                 |             |              |     |      |     |
+// |     |      |     |   =======>>   |      |     =======>>   |             |  =======>>   |     |      |     |
+// |     |      |     |               |      |                 ---------------              |     |      |     |
+// |     |      |     |               |      |                                              |     |      |     |
+// --------------------               --------                                              --------------------
+//  640x480                            360x480                   480x360                        640x480
+    ALOGI("bufferCropAndRotate");
+
+    std::unique_ptr<uint8_t[]> cropped_buffer;
+
+    int cropped_width = height;
+    int cropped_height = height;
+if(height==480)
+cropped_width=360;
+    int margin = (width-cropped_width)/2; //460
+
+    int rotated_height = cropped_width;
+    int rotated_width = cropped_height;
+
+    int rotated_y_stride = rotated_width;
+    int rotated_uv_stride = rotated_width / 2;
+
+    size_t rotated_size =
+        rotated_y_stride * rotated_height + rotated_uv_stride * rotated_height;
+    cropped_buffer.reset(new uint8_t[rotated_size]);
+    uint8_t* rotated_y_plane = cropped_buffer.get();
+    uint8_t* rotated_u_plane =
+      rotated_y_plane + rotated_y_stride * rotated_height;
+    uint8_t* rotated_v_plane =
+      rotated_u_plane + rotated_uv_stride * rotated_height / 2;
+    int frontRot = -1, backRot = -1;
+    getRotation(&frontRot, &backRot);
+    int finalRot=0;
+    if(frontRot != -1)
+       finalRot=frontRot;
+    else
+    finalRot - backRot;
+            libyuv::RotationMode rotation_mode = libyuv::RotationMode::kRotate0;
+
+    switch(finalRot){
+    
+        case 0:
+            rotation_mode = libyuv::RotationMode::kRotate0;
+            break;
+        case 90:
+            rotation_mode = libyuv::RotationMode::kRotate90;
+            break;
+        case 180:
+            rotation_mode = libyuv::RotationMode::kRotate180;
+            break;
+        case 270:
+            rotation_mode = libyuv::RotationMode::kRotate270;
+            break;
+ 
+}
+    //libyuv::RotationMode rotation_mode = libyuv::RotationMode::kRotate90;
+    //libyuv::RotationMode rotation_mode = libyuv::RotationMode::kRotate270;
+
+    ALOGE("%s Calling ConvertToI420",__FUNCTION__);
+
+    int res = libyuv::ConvertToI420(
+      buff, width*height*3/2, rotated_y_plane,
+      rotated_y_stride, rotated_u_plane, rotated_uv_stride, rotated_v_plane,
+      rotated_uv_stride, margin, 0, width,
+      height, cropped_width, cropped_height, rotation_mode,
+      libyuv::FourCC::FOURCC_I420);
+
+    if(res){
+    ALOGE("%s Res True Return",__FUNCTION__);
+
+        ALOGE("critical ConvertToI420 res:%d ", res);
+        return;
+    }
+
+    ALOGE("%s Calling I420 Scale",__FUNCTION__);
+
+    res = libyuv::I420Scale(
+      rotated_y_plane, rotated_y_stride, rotated_u_plane, rotated_uv_stride,
+      rotated_v_plane, rotated_uv_stride, rotated_width, rotated_height,
+      buff_out, width,
+      buff_out + width*height,
+      width / 2,
+      buff_out + width*height*5/4,
+      width/2, width,
+      height, libyuv::FilterMode::kFilterNone);
+
+      if(res){
+    ALOGE("%s Res true Scale",__FUNCTION__);
+
+        ALOGE("critical I420Scale res:%d ", res);
+    }
+
+}
+
+char buffer_recv[1280*720*3/2];
+
+#endif
+
 
 bool Sensor::threadLoop() {
     /**
@@ -415,7 +599,10 @@ bool Sensor::threadLoop() {
         ClientVideoBuffer *handle = ClientVideoBuffer::getClientInstance();
         handle->clientBuf[handle->clientRevCount % 1].decoded = false;
         #ifdef CROP_ROTATE
-        char *fbuffer = (char *)handle->clientBuf[handle->clientRevCount % 1].buffer;
+        char prop_val[PROPERTY_VALUE_MAX] = {'\0'};        
+	property_get("vendor.camera.app.name", prop_val, "false");
+	ALOGI("%s APP Name : %s",__FUNCTION__,prop_val);
+       	char *fbuffer = (char *)handle->clientBuf[handle->clientRevCount % 1].buffer;
         bufferCropAndRotate((uint8_t*)fbuffer, (uint8_t*)buffer_recv);
         #endif
 
@@ -893,6 +1080,10 @@ void Sensor::captureNV12(uint8_t *img, uint32_t gain, uint32_t width, uint32_t h
             // For I420 input support
             ALOGVV(LOG_TAG " %s: I420 no scaling required Size = %dx%d", __FUNCTION__, width,
                    height);
+
+#ifdef USE_PIPE
+            memcpy(img, bufData, width * height * 1.5);
+#else
             const uint8_t *src_y = bufData;
             int src_stride_y = mSrcWidth;
             const uint8_t *src_u = bufData + src_size;
@@ -909,6 +1100,7 @@ void Sensor::captureNV12(uint8_t *img, uint32_t gain, uint32_t width, uint32_t h
                                                  src_stride_v, dst_y, dst_stride_y, dst_uv,
                                                  dst_stride_uv, width, height)) {
                 }
+#endif
             } else {
                 ALOGVV(LOG_TAG " %s: [NON-SG1] convert I420 to NV21!", __FUNCTION__);
                 if (int ret = libyuv::I420ToNV21(src_y, src_stride_y, src_u, src_stride_u, src_v,
@@ -965,7 +1157,9 @@ void Sensor::captureNV12(uint8_t *img, uint32_t gain, uint32_t width, uint32_t h
 
             uint8_t *dst_uv = dst_y + width * height;
             int dst_stride_uv = width;
-
+#ifdef USE_PIPE
+            memcpy(img, mDstBuf.data(), width * height * 1.5);
+#else
             if (m_major_version == 1) {
                 ALOGVV(LOG_TAG " %s: [SG1] convert I420 to NV12!", __FUNCTION__);
                 if (int ret = libyuv::I420ToNV12(src_y, src_stride_y, src_u, src_stride_u, src_v,
@@ -979,6 +1173,7 @@ void Sensor::captureNV12(uint8_t *img, uint32_t gain, uint32_t width, uint32_t h
                                                  dst_stride_uv, width, height)) {
                 }
             }
+#endif
         } else {
             // For NV12 Input support
             ALOGVV(LOG_TAG " %s: NV12 frame with scaling to Size = %dx%d", __FUNCTION__, width,
@@ -1056,11 +1251,11 @@ void Sensor::captureNV21(uint8_t *img, uint32_t gain, uint32_t width, uint32_t h
 
     ClientVideoBuffer *handle = ClientVideoBuffer::getClientInstance();
     //uint8_t *bufData = handle->clientBuf[handle->clientRevCount % 1].buffer;
-  //  #ifdef CROP_ROTATE
-  //  uint8_t *bufData = (uint8_t *)buffer_recv;
-  //  #else
+    #ifdef CROP_ROTATE
+    uint8_t *bufData = (uint8_t *)buffer_recv;
+    #else
     uint8_t *bufData = handle->clientBuf[handle->clientRevCount % 1].buffer;
-    //#endif
+    #endif
 
     int src_size = mSrcWidth * mSrcHeight;
     int dstFrameSize = width * height;

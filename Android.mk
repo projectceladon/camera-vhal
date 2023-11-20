@@ -175,6 +175,7 @@ ifeq ($(TARGET_BOARD_PLATFORM), celadon)
 camera_vhal_cflags += -DGRALLOC_MAPPER4
 else
 camera_vhal_cflags += -DENABLE_FFMPEG
+camera_vhal_cflags += -DUSE_PIPE
 endif
 
 LOCAL_MODULE_RELATIVE_PATH	:= ${camera_vhal_module_relative_path}

@@ -69,6 +69,7 @@ bool gCameraFacingBack;
 
 bool gStartMetadataUpdate;
 bool gDoneMetadataUpdate;
+int gDataPipeHandle = -1;
 
 using namespace socket;
 #ifdef ENABLE_FFMPEG
@@ -91,7 +92,7 @@ CameraSocketServerThread::CameraSocketServerThread(std::string suffix,
     int err = pthread_create(&threadId, NULL, (THREADFUNCPTR) &CameraSocketServerThread::threadFunc, this);
     if(err)
         ALOGE("thread create failed");
- 
+    ALOGI("%s camera socket server path is %s", __FUNCTION__, mSocketPath.c_str());
     mNumOfCamerasRequested = 0;
 }
 
@@ -158,6 +159,10 @@ void CameraSocketServerThread::setCameraResolution(uint32_t resolution) {
             gCameraMaxWidth = 1920;
             gCameraMaxHeight = 1080;
             break;
+	case uint32_t(FrameResolution::kWXGA):
+            gCameraMaxWidth = 640;
+            gCameraMaxHeight = 360;
+            break;
         default:
             break;
     }
@@ -165,6 +170,22 @@ void CameraSocketServerThread::setCameraResolution(uint32_t resolution) {
           gCameraMaxHeight);
 
     setCameraMaxSupportedResolution(gCameraMaxWidth, gCameraMaxHeight);
+}
+
+ssize_t CameraSocketServerThread::recvData(int handle, char *pkt, int size, int flag) {
+#ifndef USE_PIPE
+    return recv(handle, pkt, size, flag);
+#else
+    return read(handle, pkt, size);
+#endif
+}
+
+ssize_t CameraSocketServerThread::sendData(int handle, char *pkt, int size, int flag) {
+#ifndef USE_PIPE
+    return send(handle, pkt, size, flag);
+#else
+    return write(handle, pkt, size);
+#endif
 }
 
 bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
@@ -186,7 +207,7 @@ bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
     camera_packet_t *ack_packet = NULL;
     camera_header_t header = {};
     if(!skipCapRead) {
-        if ((recv_size = recv(mClientFd, (char *)&header, sizeof(camera_header_t), MSG_WAITALL)) < 0) {
+        if ((recv_size = recvData(mClientFd, (char *)&header, sizeof(camera_header_t), MSG_WAITALL)) < 0) {
             ALOGE(LOG_TAG "%s: Failed to receive header, err: %s ", __FUNCTION__, strerror(errno));
             goto out;
         }
@@ -211,14 +232,14 @@ bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
     capability.maxNumberOfCameras = MAX_NUMBER_OF_SUPPORTED_CAMERAS;
 
     memcpy(cap_packet->payload, &capability, sizeof(camera_capability_t));
-    if (send(mClientFd, cap_packet, cap_packet_size, 0) < 0) {
+    if (sendData(mClientFd,(char *)cap_packet, cap_packet_size, 0) < 0) {
         ALOGE(LOG_TAG "%s: Failed to send camera capabilities, err: %s ", __FUNCTION__,
               strerror(errno));
         goto out;
     }
     ALOGI(LOG_TAG "%s: Sent CAPABILITY packet to client", __FUNCTION__);
 
-    if ((recv_size = recv(mClientFd, (char *)&header, sizeof(camera_header_t), MSG_WAITALL)) < 0) {
+    if ((recv_size = recvData(mClientFd, (char *)&header, sizeof(camera_header_t), MSG_WAITALL)) < 0) {
         ALOGE(LOG_TAG "%s: Failed to receive header, err: %s ", __FUNCTION__, strerror(errno));
         goto out;
     }
@@ -250,7 +271,7 @@ bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
         // Update the number of cameras globally to create camera pipeline.
         gMaxNumOfCamerasSupported = mNumOfCamerasRequested;
     }
-    if ((recv_size = recv(mClientFd, (char *)&camera_info,
+    if ((recv_size = recvData(mClientFd, (char *)&camera_info,
                           mNumOfCamerasRequested * sizeof(camera_info_t), MSG_WAITALL)) < 0) {
         ALOGE(LOG_TAG "%s: Failed to receive camera info, err: %s ", __FUNCTION__, strerror(errno));
         goto out;
@@ -295,6 +316,7 @@ bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
         }
 
         switch (camera_info[i].resolution) {
+	    case uint32_t(FrameResolution::kWXGA):
             case uint32_t(FrameResolution::k480p):
             case uint32_t(FrameResolution::k720p):
             case uint32_t(FrameResolution::k1080p):
@@ -349,6 +371,7 @@ bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
         // Going to update metadata for each camera, so update the status.
         gStartMetadataUpdate = false;
         gDoneMetadataUpdate = false;
+	camera_info[i].sensorOrientation = 0;
         camera_id = i;
         ALOGI(LOG_TAG
               "%s - Client requested for codec_type: %s, resolution: %s, orientation: %u, and "
@@ -413,6 +436,18 @@ bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
                   "hence selected default",
                   __FUNCTION__);
         }
+
+#if 0
+        // Start updating metadata for one camera, so update the status.
+        gStartMetadataUpdate = true;
+
+        // Wait till complete the metadata update for a camera.
+        while (!gDoneMetadataUpdate) {
+            ALOGVV("%s: wait till complete the metadata update for a camera", __FUNCTION__);
+            // 200us sleep for this thread.
+            std::this_thread::sleep_for(std::chrono::microseconds(200));
+        }
+#endif
         gVirtualCameraFactory.createVirtualRemoteCamera(gVirtualCameraFactory.mSocketServer, camera_id);
     }
 
@@ -430,7 +465,7 @@ bool CameraSocketServerThread::configureCapabilities(bool skipCapRead) {
     ack_packet->header.size = sizeof(camera_ack_t);
 
     memcpy(ack_packet->payload, &ack_payload, sizeof(camera_ack_t));
-    if (send(mClientFd, ack_packet, ack_packet_size, 0) < 0) {
+    if (sendData(mClientFd, (char *)ack_packet, ack_packet_size, 0) < 0) {
         ALOGE(LOG_TAG "%s: Failed to send camera capabilities, err: %s ", __FUNCTION__,
               strerror(errno));
         goto out;
@@ -445,6 +480,63 @@ out:
     ALOGVV(LOG_TAG " %s: Exit", __FUNCTION__);
     return status;
 }
+
+
+bool CameraSocketServerThread::ProcessCameraDataFromPipe(ClientVideoBuffer *handle) {
+    int size_header =0;
+    ssize_t size_pending =0;
+    camera_header_t buffer_header = {};
+ALOGE("ProcessCameraDataFromPipe start\n");
+    int retryCount = 0;
+    uint8_t *fbuffer = (uint8_t *)handle->clientBuf[handle->clientRevCount % 1].buffer;
+    size_header = read(gDataPipeHandle, (char *)&buffer_header, sizeof(camera_header_t));
+    if(buffer_header.type == CAMERA_DATA){
+
+        size_pending = buffer_header.size;
+        while(size_pending != 0){
+            ssize_t size_data = 0;
+            size_data = read(gDataPipeHandle, (char *)fbuffer+size_update, size_pending);
+
+            if(size_data < 0){
+                if(retryCount > 3) {
+                    ALOGE("Dropping frame \n");
+                    break;
+                }
+                retryCount++;
+                ALOGE(LOG_TAG "entered into recv error, break to recover");
+                continue;
+            }
+            size_update += size_data;
+            size_pending -= size_data;
+            if (size_pending == 0){
+                handle->clientRevCount++;
+#if 0
+                FILE *fp_dump = fopen("/data/dump.yuv","w");
+                if(fp_dump != NULL){
+                    fwrite(fbuffer,size_update,1,fp_dump);
+                    ALOGE(LOG_TAG "dump camera frame");
+                    fclose(fp_dump);
+                }
+#endif
+                size_update = 0;
+                ALOGE(LOG_TAG "[I420] %s: Packet rev %d and "
+                    "size %zd",
+                    __FUNCTION__, handle->clientRevCount, size_data);
+                break;
+            }
+        }
+    } else if(buffer_header.type == REQUEST_CAPABILITY){
+       ALOGE("Calling request Capability \n");
+       if(!configureCapabilities(true)) {
+           return false;
+       }
+    } else {
+        ALOGE("invalid packet received");
+        return false;
+    }
+    return true;
+}
+
 
 bool CameraSocketServerThread::threadLoop() {
     return true;
@@ -462,6 +554,7 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
     struct sockaddr_vm addr_vm ;
     struct sockaddr_in addr_ip;
     int trans_mode = 0;
+    int pipe_handle = -1;
     char mode[PROPERTY_VALUE_MAX];
 
     if ((property_get("ro.vendor.camera.transference", mode, nullptr) > 0) ){
@@ -477,9 +570,16 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
        //Fall back to unix socket by default
        //trans_mode = UNIX;
        //D to do 
+#ifndef USE_PIPE
        trans_mode = VSOCK;
+#else
+       trans_mode = PIPE;
+#endif
        ALOGV("%s: falling back to UNIX as the trans mode is not set",__FUNCTION__);
     }
+
+     trans_mode = PIPE;
+
     if(trans_mode == UNIX)
     {
         threadParam->mSocketServerFd = ::socket(AF_UNIX, SOCK_STREAM, 0);
@@ -575,7 +675,7 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
             ALOGV("%s Failed to listen on ", __FUNCTION__);
             return NULL;
         }
-    }else{
+    }else if(trans_mode == VSOCK){
         memset(&addr_ip, 0, sizeof(addr_ip));
         addr_vm.svm_family = AF_VSOCK;
         addr_vm.svm_port = 1982;
@@ -591,7 +691,7 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
         }
         ret = ::bind(threadParam->mSocketServerFd, (struct sockaddr *)&addr_vm,
             sizeof(struct sockaddr_vm));
-        if (ret < 0) {
+        if (ret < 0) {.
             ALOGV(LOG_TAG " %s Failed to bind port(%d). ret: %d, %s", __func__, addr_vm.svm_port, ret,
             strerror(errno));
             return NULL;
@@ -603,6 +703,85 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
         }
 
     }
+
+        } else if(trans_mode == PIPE) {
+ALOGE("Shiva trans mode pipe \n");
+        while (mRunning) {
+            if(trans_mode == PIPE) {
+                while (1) {
+                    pipe_handle = open("/dev/virtpipe-common", O_RDWR);
+                    if (pipe_handle < 0) {
+                        ALOGD("%s open /dev/virtpipe-common fail errno=%d, error=%s\n", __FUNCTION__, errno, strerror(errno));
+                        sleep(1);
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+                while(1) {
+                    ALOGD("%s: after pipe open writing camera_ctrl to create pipe handle \n", __FUNCTION__);
+                    if (write(pipe_handle, "camera_ctrl", strlen("camera_ctrl")) < 0) {
+                        ALOGE("%s: open pipe fail...\n", __FUNCTION__);
+                        sleep(1);
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+
+                while (1) {
+                    gDataPipeHandle = open("/dev/virtpipe-common", O_RDWR);
+                    if (gDataPipeHandle < 0) {
+                        ALOGD("%s open /dev/virtpipe-common fail errno=%d, error=%s\n", __FUNCTION__, errno, strerror(errno));
+                        sleep(1);
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+                while(1) {
+                    ALOGD("%s: after pipe open writing camera_data to create pipe handle \n", __FUNCTION__);
+                    if (write(gDataPipeHandle, "camera_data", strlen("camera_data")) < 0) {
+                        ALOGE("%s: open camera data pipe fail...\n", __FUNCTION__);
+                        sleep(1);
+                        continue;
+                    } else {
+                        break;
+                    }
+                }
+                ALOGE("pipe connected success \n");
+            }
+
+            mClientFd = pipe_handle;
+
+            bool status = false;
+            status = configureCapabilities(false);
+            if (status) {
+                ALOGI(LOG_TAG
+                      "%s: Capability negotiation and metadata update"
+                      "for %d camera(s) completed successfully..",
+                      __FUNCTION__, mNumOfCamerasRequested);
+            }
+
+            ClientVideoBuffer *handle = ClientVideoBuffer::getClientInstance();
+            uint8_t *fbuffer = (uint8_t *)handle->clientBuf[handle->clientRevCount % 1].buffer;
+            // Reset and clear the input buffer before receiving the frames.
+            handle->reset();
+
+            int retryLoop = 0;
+            while (true) {
+                if(!ProcessCameraDataFromPipe(handle)) {
+                    retryLoop++;
+                    if(retryLoop > 5) {
+                        break;
+                    }
+                    sleep(1);
+                    continue;
+                }
+                retryLoop = 0;
+            }
+        }
+}
     while (threadParam->mRunning) {
         ALOGI(LOG_TAG " %s: Wait for camera client to connect. . .", __FUNCTION__);
 
@@ -614,7 +793,7 @@ void* CameraSocketServerThread::threadFunc(void *arg) {
             socklen_t alen = sizeof(struct sockaddr_vm);
             new_client_fd = ::accept(threadParam->mSocketServerFd, (struct sockaddr *)&addr_vm, &alen);
         }
-        else
+        else if(trans_mode == UNIX)
         {
             socklen_t alen = sizeof(struct sockaddr_un);
             new_client_fd = ::accept(threadParam->mSocketServerFd, (struct sockaddr *)&addr_un, &alen);
