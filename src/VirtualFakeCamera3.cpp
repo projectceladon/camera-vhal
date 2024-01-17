@@ -3048,8 +3048,10 @@ bool VirtualFakeCamera3::ReadoutThread::threadLoop() {
     result.partial_result = 1;
     /*Coverity Fix:  If the current camera device is not a logical multi-camera, or the
       corresponding capture_request doesn't request on any physical camera,
-      this field must be 0*/
+      this field must be 0. Since we don't have any Physical Camera, the array of Strings  containing Physical
+      camera Id is NULL*/
     result.num_physcam_metadata=0;
+    result.physcam_ids = NULL;
 
     // Go idle if queue is empty, before sending result
     bool signalIdle = false;
@@ -3104,8 +3106,10 @@ void VirtualFakeCamera3::ReadoutThread::onJpegDone(const StreamBuffer &jpegBuffe
 
     /*Coverity Fix:  If the current camera device is not a logical multi-camera, or the
       corresponding capture_request doesn't request on any physical camera,
-      this field must be 0*/
+      this field must be 0. Since we don't have any Physical Camera, the array of Strings  containing Physical
+      camera Id is NULL*/
     result.num_physcam_metadata=0;
+    result.physcam_ids = NULL;
 
     if (!success) {
         ALOGE(
