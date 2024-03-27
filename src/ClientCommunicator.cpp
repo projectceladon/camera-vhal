@@ -240,6 +240,7 @@ void ClientCommunicator::handleCameraInfo(uint32_t header_size) {
               "avoiding to process camera_info and adding entry for other camera",
               __FUNCTION__, mClientId);
     }
+    sendAck();
 }
 
 void ClientCommunicator::sendAck() {
