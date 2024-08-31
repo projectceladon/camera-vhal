@@ -33,7 +33,7 @@ namespace android {
 namespace socket {
 
 enum class VideoCodecType { kH264 = 1, kH265 = 2,kI420 = 4, kMJPEG = 8, kAll = 15 };
-enum class FrameResolution { k480p = 1, k720p = 2, k1080p = 4, kAll = 7 };
+enum class FrameResolution { k480p = 1, k720p = 2, k1080p = 4, kWXGA = 8, kAll = 15 };
 
 enum class SensorOrientation {
     ORIENTATION_0 = 0,
@@ -63,6 +63,7 @@ typedef struct _camera_config {
     uint32_t cameraId;
     uint32_t codec_type;
     uint32_t resolution;
+    char pkg_name[128];
     uint32_t reserved[5];
 } camera_config_t;
 

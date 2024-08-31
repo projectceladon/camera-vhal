@@ -54,6 +54,8 @@ const char* codec_type_to_str(uint32_t type) {
             return "H264";
         case int(android::socket::VideoCodecType::kH265):
             return "H265";
+        case int(android::socket::VideoCodecType::kI420):
+            return "I420";
         default:
             return "invalid";
     }

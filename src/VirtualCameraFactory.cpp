@@ -31,6 +31,8 @@
 #include <log/log.h>
 #include <cutils/properties.h>
 #include "VirtualBuffer.h"
+#include <linux/videodev2.h>
+
 extern camera_module_t HAL_MODULE_INFO_SYM;
 
 /*
@@ -38,6 +40,12 @@ extern camera_module_t HAL_MODULE_INFO_SYM;
  * initialized when camera emulation HAL is loaded.
  */
 android::VirtualCameraFactory gVirtualCameraFactory;
+
+struct buffer
+{
+    void *start;
+    size_t length;
+};
 
 namespace android {
 
@@ -104,9 +112,21 @@ bool VirtualCameraFactory::constructVirtualCamera() {
 
     // Allocate space for each cameras requested.
     if(mVirtualCameras != NULL) {
+
+for(int i = 0; i < mNumOfCamerasSupported; i++) {
+            if(mCallbacks != nullptr) {
+                mCallbacks->camera_device_status_change(mCallbacks, mVirtualCameras[i]->mCameraID, CAMERA_DEVICE_STATUS_NOT_PRESENT);
+            } else {
+                ALOGE("%s : Fail to update camera status to camera server\n", __FUNCTION__);
+            }
+        }
+
         delete mVirtualCameras;
         mVirtualCameras = NULL;
     }
+
+    mNumOfCamerasSupported = gMaxNumOfCamerasSupported;
+
     mVirtualCameras = new VirtualBaseCamera *[mNumOfCamerasSupported];
     if (mVirtualCameras == nullptr) {
         ALOGE("%s: Unable to allocate virtual camera array", __FUNCTION__);
@@ -128,7 +148,7 @@ bool VirtualCameraFactory::createSocketServer() {
 
     mSocketServer =
         std::make_shared<CameraSocketServerThread>(id, std::ref(mCameraSessionState));
-    
+    mSocketServer->run("FrontBackCameraSocketServerThread");
     // TODO need to return false if error.
     return true;
 }
@@ -298,6 +318,11 @@ void VirtualCameraFactory::createVirtualRemoteCamera(
                   gCameraFacingBack ? "back" : "front", cameraId, strerror(-res), res);
             delete mVirtualCameras[cameraId];
         }
+    }
+    if(mCallbacks != nullptr) {
+        mCallbacks->camera_device_status_change(mCallbacks, cameraId, CAMERA_DEVICE_STATUS_PRESENT);
+    } else {
+        ALOGE("%s : Fail to update camera status to camera server\n", __FUNCTION__);
     }
 }
 
