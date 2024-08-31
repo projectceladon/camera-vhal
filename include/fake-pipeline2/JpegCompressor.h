@@ -74,7 +74,7 @@ public:
     status_t reserve();
 
     // TODO: Measure this
-    static const size_t kMaxJpegSize = 300000;
+    static const size_t kMaxJpegSize = 1200000;
 
 private:
     Mutex mBusyMutex;
